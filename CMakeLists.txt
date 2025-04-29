@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.30)
 project(distributed)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_COMPILER /usr/lib64/openmpi/bin/mpic++)
 
 #include_directories("/usr/include/openmpi-x86_64")
