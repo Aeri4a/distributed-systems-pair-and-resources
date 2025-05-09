@@ -45,12 +45,12 @@ RecvResult receive_nonblocking() {
     return result;
 }
 
-/*void update_time_vector(const RecvResult& recv_result, std::vector<int>& time_vector, const int world_rank) {
+void update_time_vector(const RecvResult& recv_result, std::vector<int>& time_vector, const int world_rank) {
     const int rec_timestamp = recv_result.msg_buffer[0];
     const int own_timestamp = time_vector[world_rank];
     time_vector[recv_result.status.MPI_SOURCE] = std::max(rec_timestamp, own_timestamp);
     time_vector[world_rank] = time_vector[recv_result.status.MPI_SOURCE] + 1;
-}*/
+}
 
 const char* msg_type_string(const MessageType msgType) {
     switch (msgType) {
@@ -63,18 +63,15 @@ const char* msg_type_string(const MessageType msgType) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <resource_count>\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    int resource_count;
-    try {
-        resource_count = std::stoi(argv[1]);
-    }
-    catch (std::invalid_argument const& ex) {
-        fprintf(stderr, "%s\n", ex.what());
-        return EXIT_FAILURE;
+    int resource_count = 10;
+    if (argc > 1) {
+        try {
+            resource_count = std::stoi(argv[1]);
+        }
+        catch (std::invalid_argument const& ex) {
+            fprintf(stderr, "%s\n", ex.what());
+            return EXIT_FAILURE;
+        }
     }
 
     int world_size, world_rank, name_length, provided;
@@ -135,10 +132,7 @@ int main(int argc, char** argv) {
             const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
             const auto message_source = result.status.MPI_SOURCE;
 
-            int rec_timestamp = result.msg_buffer[0];
-            int own_timestamp = time_vector[world_rank];
-            time_vector[result.status.MPI_SOURCE] = std::max(rec_timestamp, own_timestamp);
-            time_vector[world_rank] = time_vector[result.status.MPI_SOURCE] + 1;
+            update_time_vector(result, time_vector, world_rank);
 
             switch (message_type) {
             case REQ_RES: {
@@ -164,8 +158,7 @@ int main(int argc, char** argv) {
 
             int rec_timestamp = result.msg_buffer[0];
             int own_timestamp = time_vector[world_rank];
-            time_vector[result.status.MPI_SOURCE] = std::max(rec_timestamp, own_timestamp);
-            time_vector[world_rank] = time_vector[result.status.MPI_SOURCE] + 1;
+            update_time_vector(result, time_vector, world_rank);
 
             switch (message_type) {
             case REQ_RES: {
@@ -235,10 +228,7 @@ int main(int argc, char** argv) {
             const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
             const auto message_source = result.status.MPI_SOURCE;
 
-            int rec_timestamp = result.msg_buffer[0];
-            int own_timestamp = time_vector[world_rank];
-            time_vector[result.status.MPI_SOURCE] = std::max(rec_timestamp, own_timestamp);
-            time_vector[world_rank] = time_vector[result.status.MPI_SOURCE] + 1;
+            update_time_vector(result, time_vector, world_rank);
 
             switch (message_type) {
             case REQ_RES: {
