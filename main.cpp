@@ -4,6 +4,7 @@
 #include <ctime>
 #include <deque>
 #include <mpi.h>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -58,7 +59,7 @@ std::unordered_map<int, int> fill_map_with_artists(const Role process_roles[], i
 }
 
 int find_least_paired_process(const std::unordered_map<int, int>& pair_count_history,
-                              std::unordered_set<int> available_artists) {
+                              std::unordered_set<int>& available_artists) {
     int min_paired_count = INT_MAX;
     int min_paired_process = -1;
 
@@ -77,20 +78,24 @@ int main(int argc, char** argv) {
     State state = REST;
     int role_geo_count = 0;
     int role_art_count = 0;
-    int time_vector[world_size]{};
 
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
+    int time_vector[world_size]{};
     Role process_roles[world_size]{};
+    /*std::vector<int> time_vector;
+    time_vector.resize(world_size, 0);
+    std::vector<Role> process_roles;
+    process_roles.resize(world_size, GEO);*/
 
     printf("(%d) [%d] Process started of %d\n", world_rank, time_vector[world_rank], world_size);
 
     if (world_rank == 0) {
         std::srand(static_cast<unsigned int>(std::time(nullptr)));
 
-        while (role_art_count != 0 && role_geo_count != 0) {
+        while (role_art_count == 0 || role_geo_count == 0) {
             role_art_count = 0;
             role_geo_count = 0;
 
@@ -104,6 +109,7 @@ int main(int argc, char** argv) {
                     role_art_count++;
                 }
             }
+            printf("GEO COUNT: %d, ART COUNT: %d\n", role_geo_count, role_art_count);
         }
 
         printf("(%d) [%d] Roles generated, my role: %s\n", world_rank, time_vector[world_rank],
@@ -135,6 +141,7 @@ int main(int argc, char** argv) {
         while (!is_done) {
             switch (state) {
             case REST: {
+                // std::this_thread::sleep_for(std::chrono::seconds(2));
                 printf("(G%d) [%d] Changed status to: REST\n", world_rank, time_vector[world_rank]);
                 state = WAIT_FOR_QUEUE;
                 break;
@@ -145,7 +152,7 @@ int main(int argc, char** argv) {
 
                 pair_queue.add(world_rank, time_vector[world_rank]);
                 for (int i = 0; i < world_size; i++) {
-                    if (process_roles[i] != world_rank && process_roles[i] == GEO) {
+                    if (i != world_rank && process_roles[i] == GEO) {
                         send_message_buf[0] = ++time_vector[world_rank];
                         MPI_Send(send_message_buf, 1, MPI_INT, i, REQ_QUEUE, MPI_COMM_WORLD);
                     }
@@ -196,8 +203,6 @@ int main(int argc, char** argv) {
                 break;
             }
             case LOOK_FOR_PAIR: {
-                bool is_first_match = true;
-
                 printf("(G%d) [%d] Changed status to: LOOK_FOR_PAIR\n", world_rank, time_vector[world_rank]);
                 int best_candidate = -1;
 
@@ -246,11 +251,12 @@ int main(int argc, char** argv) {
                 // allowed for available artist
                 // if process is in cut then try to send request for pairing
 
+                bool is_first_match = true;
                 while (process_to_pair == -1) {
                     if (is_first_match && !available_artists.empty()) {
                         // best_candidate == -1 means first try failed
                         // first try
-                        best_candidate = find_least_paired_process(pair_count_history, available_artists);
+                        best_candidate = find_least_paired_process(pair_count_history, available_artists); // ensure no -1!!!
                         send_message_buf[0] = ++time_vector[world_rank];
                         MPI_Send(send_message_buf, 1, MPI_INT, best_candidate, PAIR, MPI_COMM_WORLD);
                         pair_requested.insert(best_candidate);
@@ -337,7 +343,7 @@ int main(int argc, char** argv) {
                 // is_done = true;
 
                 // RESET HARD
-                available_artists.clear();
+                // available_artists.clear();
                 pair_queue = PairQueue();
                 // pair_count_history.clear();
                 pair_requested.clear();
@@ -366,11 +372,11 @@ int main(int argc, char** argv) {
             switch (state) {
             case REST: {
                 printf("(A%d) [%d] Changed status to: REST\n", world_rank, time_vector[world_rank]);
-                state = LOOK_FOR_PAIR;
+                state = WAIT_FOR_PAIR;
                 break;
             }
-            case LOOK_FOR_PAIR: {
-                printf("(A%d) [%d] Changed status to: LOOK_FOR_PAIR\n", world_rank, time_vector[world_rank]);
+            case WAIT_FOR_PAIR: {
+                printf("(A%d) [%d] Changed status to: WAIT_FOR_PAIR\n", world_rank, time_vector[world_rank]);
 
                 // "broadcast" to all geo
                 for (int i = 0; i < world_size; i++) {
@@ -423,7 +429,7 @@ int main(int argc, char** argv) {
                             int artist_pair = rec_message_buf[1];
                             if (artist_pair == world_rank) {
                                 process_to_pair = status.MPI_SOURCE;
-                                pair_wait_queue.clear();
+                                pair_wait_queue.clear(); // could send before ?
                                 printf("(A%d) [%d] Paired with process (%d)\n", world_rank, time_vector[world_rank],
                                        process_to_pair);
                             }
@@ -444,9 +450,11 @@ int main(int argc, char** argv) {
             }
             case WAIT_FOR_RESOURCE: {
                 // is_done = true;
+                // std::this_thread::sleep_for(std::chrono::seconds(2));
 
                 // RESET HARD
                 process_to_pair = -1;
+                state = REST;
                 break;
             }
             case IN_SECTION: {
