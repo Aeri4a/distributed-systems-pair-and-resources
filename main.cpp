@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
@@ -16,37 +17,73 @@ enum Role {
 };
 
 enum State {
-    REST,
-    WAIT_FOR_QUEUE,
-    WAIT_FOR_PAIR,
-    LOOK_FOR_PAIR,
-    PAIRED,
-    WAIT_FOR_RESOURCE,
-    IN_SECTION,
+    REST, // G+A
+    WAIT_FOR_QUEUE, // G
+    WAIT_FOR_PAIR, // A
+    LOOK_FOR_PAIR, // G
+    PAIRED, // G+A
+    WAIT_FOR_RESOURCE, // A
+    IN_SECTION, // A
 };
 
 enum MessageType {
-    REQ_QUEUE,
-    ACK_QUEUE,
-    AVAILABLE,
-    PAIR, // BOTH
-    RELEASE_PAIR, // ONLY_GEO
+    REQ_QUEUE, // G->G
+    ACK_QUEUE, // G->G
+    AVAILABLE, // A->G
+    PAIR, // AG->AG
+    RELEASE_PAIR, // G->AG
     // other
-    UNPAIR,
+    UNPAIR, // A->G
 };
 
-bool is_pairing_allowed(int available_size, const PairQueue& pair_queue, const int time_vector[], int size,
-                        int self_timestamp) {
-    for (int i = 0; i < size; i++) {
-        if (pair_queue.getPosition(i) + 1 > available_size && time_vector[i] < self_timestamp) {
-            return false;
-        }
-    }
+constexpr int REQ_QUEUE_LEN = 1;
+constexpr int ACK_QUEUE_LEN = 1;
+constexpr int AVAILABLE_LEN = 1;
+constexpr int PAIR_LEN = 1;
+constexpr int RELEASE_PAIR_LEN = 2;
+constexpr int UNPAIR_LEN = 1;
+
+// enum MessageLength {
+//     REQ_QUEUE_LEN, // G->G
+//     ACK_QUEUE_LEN, // G->G
+//     AVAILABLE_LEN, // A->G
+//     PAIR_LEN, // AG->AG
+//     RELEASE_PAIR_LEN, // G->AG
+//     // other
+//     UNPAIR_LEN, // A->G
+// };
+
+bool is_pairing_allowed(const std::size_t available_size, const PairQueue& pair_queue,
+                        const std::vector<int>& time_vector, int self_timestamp, const std::vector<Role>& process_roles,
+                        const int world_rank) {
+
+    const int process_position = pair_queue.getPosition(world_rank);
+
+    if (process_position > available_size)
+        return false;
+
+    // const int drop_allow_count = available_size - process_position;
+    // int geo_below_with_lower_timestamp = 0;
+    //
+    // for (int i = 0; i < time_vector.size(); i++) {
+    //     if (process_roles[i] != GEO)
+    //         continue;
+    //
+    //     const int pos_in_queue_for_i_process = pair_queue.getPosition(i);
+    //
+    //     if (pos_in_queue_for_i_process < process_position)
+    //         continue;
+    //
+    //     if (time_vector[i] < self_timestamp) {
+    //         if (++geo_below_with_lower_timestamp > drop_allow_count)
+    //             return false;
+    //     }
+    // }
 
     return true;
 }
 
-std::unordered_map<int, int> fill_map_with_artists(const Role process_roles[], int size) {
+std::unordered_map<int, int> fill_map_with_artists(const std::vector<Role>& process_roles, const int size) {
     std::unordered_map<int, int> result;
 
     for (int i = 0; i < size; i++) {
@@ -65,8 +102,8 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
 
     for (const auto& entry : pair_count_history) {
         if (available_artists.find(entry.first) != available_artists.end() && entry.second < min_paired_count) {
-            min_paired_count = entry.second;
             min_paired_process = entry.first;
+            min_paired_count = entry.second;
         }
     }
 
@@ -74,21 +111,21 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
 }
 
 int main(int argc, char** argv) {
-    int world_size, world_rank;
+    int world_size, world_rank, provided;
     State state = REST;
     int role_geo_count = 0;
     int role_art_count = 0;
 
-    MPI_Init(&argc, &argv);
+    MPI_Init_thread(&argc, &argv, 1, &provided);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
-    int time_vector[world_size]{};
-    Role process_roles[world_size]{};
-    /*std::vector<int> time_vector;
+    /*int time_vector[world_size]{};
+    Role process_roles[world_size]{};*/
+    std::vector<int> time_vector;
     time_vector.resize(world_size, 0);
     std::vector<Role> process_roles;
-    process_roles.resize(world_size, GEO);*/
+    process_roles.resize(world_size, GEO);
 
     printf("(%d) [%d] Process started of %d\n", world_rank, time_vector[world_rank], world_size);
 
@@ -116,7 +153,7 @@ int main(int argc, char** argv) {
                (process_roles[0] == GEO ? "GEO" : "ART"));
     }
 
-    MPI_Bcast(process_roles, world_size, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(process_roles.data(), world_size, MPI_INT, 0, MPI_COMM_WORLD);
     const Role role = process_roles[world_rank];
     if (world_rank != 0) {
         printf("(%d) [%d] Received role: %s\n", world_rank, time_vector[world_rank], (role == GEO ? "GEO" : "ART"));
@@ -129,19 +166,21 @@ int main(int argc, char** argv) {
         // MPI
         MPI_Status status;
         int message_len = 0;
-        int rec_message_buf[10]{}, send_message_buf[10]{};
+        int rec_message_buf[2]{}, send_message_buf[2]{};
 
         // Base structures
         PairQueue pair_queue;
         std::unordered_set<int> available_artists;
         std::unordered_map<int, int> pair_count_history = fill_map_with_artists(process_roles, world_size);
+        // edge case where we send to all and all respond with not us, we have to then resend again to all PAIR
+        // this below
         std::unordered_set<int> pair_requested; // dunno now if necessary
         int process_to_pair = -1;
 
         while (!is_done) {
             switch (state) {
             case REST: {
-                // std::this_thread::sleep_for(std::chrono::seconds(2));
+                std::this_thread::sleep_for(std::chrono::seconds(2));
                 printf("(G%d) [%d] Changed status to: REST\n", world_rank, time_vector[world_rank]);
                 state = WAIT_FOR_QUEUE;
                 break;
@@ -154,7 +193,7 @@ int main(int argc, char** argv) {
                 for (int i = 0; i < world_size; i++) {
                     if (i != world_rank && process_roles[i] == GEO) {
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, 1, MPI_INT, i, REQ_QUEUE, MPI_COMM_WORLD);
+                        MPI_Send(send_message_buf, REQ_QUEUE_LEN, MPI_INT, i, REQ_QUEUE, MPI_COMM_WORLD);
                     }
                 }
                 printf("(G%d) [%d] Sent all REQ FOR QUEUE\n", world_rank, time_vector[world_rank]);
@@ -175,7 +214,8 @@ int main(int argc, char** argv) {
                         pair_queue.add(status.MPI_SOURCE, rec_timestamp);
 
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, 1, MPI_INT, status.MPI_SOURCE, ACK_QUEUE, MPI_COMM_WORLD);
+                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, status.MPI_SOURCE, ACK_QUEUE,
+                                 MPI_COMM_WORLD);
                         break;
                     }
                     case ACK_QUEUE: {
@@ -207,8 +247,8 @@ int main(int argc, char** argv) {
                 int best_candidate = -1;
 
                 // wait for available artist
-                while (!is_pairing_allowed(available_artists.size(), pair_queue, time_vector, world_size,
-                                           time_vector[world_rank])) {
+                while (!is_pairing_allowed(available_artists.size(), pair_queue, time_vector, time_vector[world_rank],
+                                           process_roles, world_rank)) {
 
                     MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
                     MPI_Get_count(&status, MPI_INT, &message_len);
@@ -225,7 +265,8 @@ int main(int argc, char** argv) {
                         pair_queue.add(status.MPI_SOURCE, rec_timestamp);
 
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, 1, MPI_INT, status.MPI_SOURCE, ACK_QUEUE, MPI_COMM_WORLD);
+                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, status.MPI_SOURCE, ACK_QUEUE,
+                                 MPI_COMM_WORLD);
                         break;
                     }
                     case AVAILABLE: {
@@ -233,19 +274,17 @@ int main(int argc, char** argv) {
                         break;
                     }
                     case RELEASE_PAIR: {
-                        if (process_roles[status.MPI_SOURCE] == GEO) {
-                            pair_queue.remove(status.MPI_SOURCE);
-                            // with who ART out of queue
-                            int busy_artist = rec_message_buf[1];
-                            available_artists.erase(busy_artist);
-                        }
+                        pair_queue.remove(status.MPI_SOURCE);
+                        // with who ART out of queue
+                        int busy_artist = rec_message_buf[1];
+                        available_artists.erase(busy_artist);
                         // ART source not possible here
                         break;
                     }
                     default:
                         break;
                     }
-                                           }
+                }
 
                 printf("(G%d) [%d] Allow to pair (because of cut)\n", world_rank, time_vector[world_rank]);
                 // allowed for available artist
@@ -256,10 +295,10 @@ int main(int argc, char** argv) {
                     if (is_first_match && !available_artists.empty()) {
                         // best_candidate == -1 means first try failed
                         // first try
-                        best_candidate = find_least_paired_process(pair_count_history, available_artists); // ensure no -1!!!
+                        best_candidate = find_least_paired_process(pair_count_history, available_artists);
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, 1, MPI_INT, best_candidate, PAIR, MPI_COMM_WORLD);
-                        pair_requested.insert(best_candidate);
+                        MPI_Send(send_message_buf, PAIR_LEN, MPI_INT, best_candidate, PAIR, MPI_COMM_WORLD);
+                        // pair_requested.insert(best_candidate);
                         printf("(G%d) [%d] Send pair to best artist (%d)\n", world_rank, time_vector[world_rank],
                                best_candidate);
 
@@ -281,37 +320,43 @@ int main(int argc, char** argv) {
                         pair_queue.add(status.MPI_SOURCE, rec_timestamp);
 
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, 1, MPI_INT, status.MPI_SOURCE, ACK_QUEUE, MPI_COMM_WORLD);
+                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, status.MPI_SOURCE, ACK_QUEUE,
+                                 MPI_COMM_WORLD);
                         break;
                     }
                     case AVAILABLE: {
                         available_artists.insert(status.MPI_SOURCE);
+                        if (!is_first_match) {
+                            send_message_buf[0] = ++time_vector[world_rank];
+                            MPI_Send(send_message_buf, PAIR_LEN, MPI_INT, status.MPI_SOURCE, PAIR, MPI_COMM_WORLD);
+                            // pair_requested.insert(status.MPI_SOURCE);
+                        }
                         break;
                     }
                     case RELEASE_PAIR: {
-                        // check if best cand is with me or not
                         int artist_pair = rec_message_buf[1];
-                        if (best_candidate != -1 && artist_pair == best_candidate) {
+                        // if someone else then just remove them from queue and available
+                        pair_queue.remove(status.MPI_SOURCE);
+                        available_artists.erase(artist_pair);
+
+                        // check if best cand is with me or not
+                        if (artist_pair == best_candidate) {
 
                             // second try to all
                             for (auto art : available_artists) {
-                                // send to all available despite him
-                                if (art == best_candidate)
-                                    continue;
+                                // send to all available **despite him**
+                                // if (art == best_candidate)
+                                //     continue;
 
                                 send_message_buf[0] = ++time_vector[world_rank];
-                                MPI_Send(send_message_buf, 1, MPI_INT, art, PAIR, MPI_COMM_WORLD);
-                                pair_requested.insert(art);
+                                MPI_Send(send_message_buf, PAIR_LEN, MPI_INT, art, PAIR, MPI_COMM_WORLD);
+                                // pair_requested.insert(art);
                             }
 
                             best_candidate = -1;
                             printf("(G%d) [%d] Best pair failed, sending to all\n", world_rank,
                                    time_vector[world_rank]);
-                        };
-
-                        // if someone else then just remove them from queue and available
-                        pair_queue.remove(status.MPI_SOURCE);
-                        available_artists.erase(artist_pair);
+                        }
                         break;
                     }
                     case PAIR: {
@@ -325,7 +370,7 @@ int main(int argc, char** argv) {
                             if (i != world_rank) {
                                 send_message_buf[0] = ++time_vector[world_rank];
                                 send_message_buf[1] = process_to_pair;
-                                MPI_Send(send_message_buf, 2, MPI_INT, i, RELEASE_PAIR, MPI_COMM_WORLD);
+                                MPI_Send(send_message_buf, RELEASE_PAIR_LEN, MPI_INT, i, RELEASE_PAIR, MPI_COMM_WORLD);
                             }
                         }
 
@@ -344,9 +389,9 @@ int main(int argc, char** argv) {
 
                 // RESET HARD
                 // available_artists.clear();
-                pair_queue = PairQueue();
+                // pair_queue = PairQueue();
                 // pair_count_history.clear();
-                pair_requested.clear();
+                // pair_requested.clear();
                 process_to_pair = -1;
                 state = REST;
                 break;
@@ -362,10 +407,10 @@ int main(int argc, char** argv) {
         // MPI
         MPI_Status status;
         int message_len = 0;
-        int rec_message_buf[10]{}, send_message_buf[10]{};
+        int rec_message_buf[2]{}, send_message_buf[2]{};
 
         // (PROCESS_ID/IS_PAIR_SEND)
-        std::deque<std::pair<int, bool>> pair_wait_queue;
+        std::list<std::pair<int, bool>> pair_wait_queue;
         int process_to_pair = -1;
 
         while (!is_done) {
@@ -382,7 +427,7 @@ int main(int argc, char** argv) {
                 for (int i = 0; i < world_size; i++) {
                     if (process_roles[i] == GEO) {
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, 1, MPI_INT, i, AVAILABLE, MPI_COMM_WORLD);
+                        MPI_Send(send_message_buf, AVAILABLE_LEN, MPI_INT, i, AVAILABLE, MPI_COMM_WORLD);
                     }
                 }
 
@@ -391,8 +436,8 @@ int main(int argc, char** argv) {
                     // analyze queue
                     if (!pair_wait_queue.empty() && !pair_wait_queue.front().second) {
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, 1, MPI_INT, pair_wait_queue.front().first, PAIR, MPI_COMM_WORLD);
-
+                        MPI_Send(send_message_buf, PAIR_LEN, MPI_INT, pair_wait_queue.front().first, PAIR,
+                                 MPI_COMM_WORLD);
                         pair_wait_queue.front().second = true;
                     }
 
@@ -414,6 +459,10 @@ int main(int argc, char** argv) {
                     }
                     case RELEASE_PAIR: {
                         // it is not from "our" geo
+                        if (pair_wait_queue.empty()) {
+                            break;
+                        }
+
                         if (status.MPI_SOURCE != pair_wait_queue.front().first) {
                             // check if in our queue and if then delete
                             for (auto it = pair_wait_queue.begin(); it != pair_wait_queue.end(); ++it) {
@@ -450,7 +499,7 @@ int main(int argc, char** argv) {
             }
             case WAIT_FOR_RESOURCE: {
                 // is_done = true;
-                // std::this_thread::sleep_for(std::chrono::seconds(2));
+                std::this_thread::sleep_for(std::chrono::seconds(2));
 
                 // RESET HARD
                 process_to_pair = -1;

@@ -1,4 +1,5 @@
 #pragma once
+#include <list>
 #include <set>
 #include <unordered_map>
 
@@ -10,16 +11,17 @@ struct PairQueueEntry {
     int timestamp;
 
     // Order by timestamp, then processId to ensure uniqueness
-    bool operator<(const PairQueueEntry& other) const {
-        if (timestamp == other.timestamp)
-            return processId < other.processId;
-        return timestamp < other.timestamp;
-    }
+    // bool operator<(const PairQueueEntry& other) const {
+    //     if (timestamp == other.timestamp)
+    //         return processId < other.processId;
+    //     return timestamp < other.timestamp;
+    // }
 };
 
 class PairQueue {
-    std::set<PairQueueEntry> queue;
-    std::unordered_map<int, std::set<PairQueueEntry>::iterator> id_map;
+    // std::set<PairQueueEntry> queue;
+    // std::unordered_map<int, std::set<PairQueueEntry>::iterator> id_map;
+    std::list<PairQueueEntry> pair_queue;
 
 public:
     void add(int id, int timestamp);

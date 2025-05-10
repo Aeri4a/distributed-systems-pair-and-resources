@@ -3,6 +3,7 @@ project(distributed)
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_COMPILER /usr/lib64/openmpi/bin/mpic++)
+add_compile_options(-Wall)
 
 #include_directories("/usr/include/openmpi-x86_64")
 set(MPI_HOME /usr/lib64/openmpi)
