@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
         artist_ranks.insert(i);
     }
 
-    printf("[%d:%d] Process enters (%s)\n", world_rank, time_vector[world_rank], processor_name);
+    printf("(%d) [%d] Process enters (%s)\n", world_rank, time_vector[world_rank], processor_name);
 
     auto start = std::chrono::high_resolution_clock::now();
     auto rest_wait_seconds = wait_dist(gen);
@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
                         MPI_Send(send_message_buf, 1, MPI_INT, i, REQ_RES, MPI_COMM_WORLD);
                     }
                     state = WAIT_FOR_RESOURCE;
-                    printf("[%d:%d] Switching to WAIT_FOR_RESOURCE (%d resources)\n", world_rank,
+                    printf("(%d) [%d] Switching to WAIT_FOR_RESOURCE (%d resources)\n", world_rank,
                            time_vector[world_rank], requested_resources);
                 }
                 continue;
@@ -213,14 +213,14 @@ int main(int argc, char** argv) {
                 used_resources[message_source] -= result.msg_buffer[1];
 
                 const int resource_sum = std::accumulate(used_resources.begin(), used_resources.end(), 0);
-                printf("[%d:%d] %d taken, %d requested, %d total\n", world_rank, time_vector[world_rank], resource_sum,
-                       requested_resources, resource_count);
+                printf("(%d) [%d] %d taken, %d requested, %d total\n", world_rank, time_vector[world_rank],
+                       resource_sum, requested_resources, resource_count);
 
                 if (resource_sum + requested_resources <= resource_count) {
                     state = IN_SECTION;
                     start = std::chrono::high_resolution_clock::now();
                     section_wait_seconds = wait_dist(gen);
-                    printf("[%d:%d] Switching to IN_SECTION (%d resources)\n", world_rank, time_vector[world_rank],
+                    printf("(%d) [%d] Switching to IN_SECTION (%d resources)\n", world_rank, time_vector[world_rank],
                            requested_resources);
                 }
 
@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
 
                         resource_queue.pop_front();
                     }
-                    printf("[%d:%d] Switching to REST (-%d resources)\n", world_rank, time_vector[world_rank],
+                    printf("(%d) [%d] Switching to REST (-%d resources)\n", world_rank, time_vector[world_rank],
                            requested_resources);
                     state = REST;
                     start = std::chrono::high_resolution_clock::now();
