@@ -7,12 +7,21 @@
 #include <mpi.h>
 #include <random>
 #include <thread>
+#include <unordered_set>
 
-enum ProcessState { REST, WAIT_FOR_RESOURCE, IN_SECTION };
+enum Role { GEO, ART };
+
+enum State { REST, WAIT_FOR_RESOURCE, IN_SECTION };
 
 enum MessageType {
+    REQ_QUEUE,
+    ACK_QUEUE,
+    AVAILABLE,
+    PAIR,
+    RELEASE_PAIR,
     REQ_RES,
     ACK_RES,
+    UNPAIR,
 };
 
 struct RecvResult {
@@ -54,12 +63,25 @@ void update_time_vector(const RecvResult& recv_result, std::vector<int>& time_ve
 
 const char* msg_type_string(const MessageType msgType) {
     switch (msgType) {
+    case REQ_QUEUE:
+        return "REQ_QUEUE";
+    case ACK_QUEUE:
+        return "ACK_QUEUE";
+    case AVAILABLE:
+        return "AVAILABLE";
+    case PAIR:
+        return "PAIR";
+    case RELEASE_PAIR:
+        return "RELEASE_PAIR";
     case REQ_RES:
         return "REQ_RES";
     case ACK_RES:
         return "ACK_RES";
+    case UNPAIR:
+        return "UNPAIR";
+    default:
+        return "";
     }
-    return "";
 }
 
 int main(int argc, char** argv) {
@@ -78,8 +100,9 @@ int main(int argc, char** argv) {
     char processor_name[100]{};
     std::vector<int> time_vector, used_resources;
     std::list<int> resource_queue;
+    std::unordered_set<int> artist_ranks;
 
-    ProcessState state = REST;
+    State state = REST;
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -92,10 +115,11 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Get_processor_name(processor_name, &name_length);
 
-    const int artist_length = world_size;
-
     time_vector.resize(world_size, 0);
-    used_resources.resize(artist_length, 0);
+    used_resources.resize(world_size, 0);
+    for (int i = 0; i < world_size; i++) {
+        artist_ranks.insert(i);
+    }
 
     printf("[%d:%d] Process enters (%s)\n", world_rank, time_vector[world_rank], processor_name);
 
@@ -116,8 +140,9 @@ int main(int argc, char** argv) {
 
                 if (duration.count() >= rest_wait_seconds) {
                     for (int i = 0; i < used_resources.size(); i++) {
-                        if (i == world_rank)
+                        if (i == world_rank || artist_ranks.find(i) == artist_ranks.end()) {
                             continue;
+                        }
                         used_resources[i] += resource_count;
                         send_message_buf[0] = ++time_vector[world_rank];
                         MPI_Send(send_message_buf, 1, MPI_INT, i, REQ_RES, MPI_COMM_WORLD);
@@ -135,6 +160,9 @@ int main(int argc, char** argv) {
             update_time_vector(result, time_vector, world_rank);
 
             switch (message_type) {
+            case PAIR: {
+                break;
+            }
             case REQ_RES: {
                 send_message_buf[0] = ++time_vector[world_rank];
                 send_message_buf[1] = resource_count;
@@ -145,6 +173,8 @@ int main(int argc, char** argv) {
                 used_resources[message_source] -= result.msg_buffer[1];
                 break;
             }
+            default:
+                break;
             }
 
             break;
@@ -183,8 +213,8 @@ int main(int argc, char** argv) {
                 used_resources[message_source] -= result.msg_buffer[1];
 
                 const int resource_sum = std::accumulate(used_resources.begin(), used_resources.end(), 0);
-                /*printf("[%d:%d] %d taken, %d requested, %d total\n", world_rank, time_vector[world_rank],
-                   resource_sum, requested_resources, resource_count);*/
+                printf("[%d:%d] %d taken, %d requested, %d total\n", world_rank, time_vector[world_rank], resource_sum,
+                       requested_resources, resource_count);
 
                 if (resource_sum + requested_resources <= resource_count) {
                     state = IN_SECTION;
@@ -196,6 +226,8 @@ int main(int argc, char** argv) {
 
                 break;
             }
+            default:
+                break;
             }
 
             break;
@@ -216,11 +248,12 @@ int main(int argc, char** argv) {
 
                         resource_queue.pop_front();
                     }
+                    printf("[%d:%d] Switching to REST (-%d resources)\n", world_rank, time_vector[world_rank],
+                           requested_resources);
                     state = REST;
                     start = std::chrono::high_resolution_clock::now();
                     rest_wait_seconds = wait_dist(gen);
                     requested_resources = resource_dist(gen);
-                    printf("[%d:%d] Switching to REST\n", world_rank, time_vector[world_rank]);
                 }
                 continue;
             }
@@ -242,6 +275,8 @@ int main(int argc, char** argv) {
                 used_resources[message_source] -= result.msg_buffer[1];
                 break;
             }
+            default:
+                break;
             }
 
             break;
