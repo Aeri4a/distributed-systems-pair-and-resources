@@ -9,5 +9,7 @@ set(MPI_HOME /usr/lib64/openmpi)
 find_package(MPI REQUIRED)
 include_directories(SYSTEM /usr/include/openmpi-x86_64)
 
-add_executable(distributed main.cpp)
+add_executable(distributed main.cpp
+        PairQueue.cpp
+        PairQueue.hpp)
 target_link_libraries(distributed PRIVATE MPI::MPI_CXX)
