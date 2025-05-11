@@ -6,6 +6,7 @@
 #include <deque>
 #include <mpi.h>
 #include <random>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +35,8 @@ enum MessageType {
     AVAILABLE, // A->G
     PAIR, // AG->AG
     RELEASE_PAIR, // G->AG
+    REQ_RES, // A->A
+    ACK_RES, // A->A
     UNPAIR, // A->G
 };
 
@@ -49,6 +52,8 @@ constexpr int ACK_QUEUE_LEN = 1;
 constexpr int AVAILABLE_LEN = 1;
 constexpr int PAIR_LEN = 1;
 constexpr int RELEASE_PAIR_LEN = 2;
+constexpr int REQ_RES_LEN = 1;
+constexpr int ACK_RES_LEN = 2;
 constexpr int UNPAIR_LEN = 1;
 
 RecvResult receive_blocking() {
@@ -114,25 +119,46 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
     return min_paired_process;
 }
 
-[[noreturn]] int main(int argc, char** argv) {
-    int world_size, world_rank, provided;
-    MPI_Init_thread(&argc, &argv, 1, &provided);
+int main(int argc, char** argv) {
+    int resource_count = 10;
+    if (argc > 1) {
+        try {
+            resource_count = std::stoi(argv[1]);
+        }
+        catch (const std::invalid_argument& e) {
+            fprintf(stderr, "Invalid argument: %s\n", e.what());
+            return EXIT_FAILURE;
+        }
+    }
+
+    int world_size, world_rank, name_length;
+    char processor_name[MPI_MAX_PROCESSOR_NAME];
+    MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    MPI_Get_processor_name(processor_name, &name_length);
 
-    std::vector<int> time_vector;
+    if (world_size < 2) {
+        fprintf(stderr, "Too few processes! Exiting\n");
+        return EXIT_FAILURE;
+    }
+
+    std::vector<int> time_vector, used_resources;
     time_vector.resize(world_size, 0);
+    used_resources.resize(world_size, 0);
     std::vector<Role> process_roles;
     process_roles.resize(world_size, GEO);
 
-    printf("(%d) [%d] Process started of %d\n", world_rank, time_vector[world_rank], world_size);
+    printf("(%d) [%d] Process started of %d (%s)\n", world_rank, time_vector[world_rank], world_size, processor_name);
 
     int role_geo_count = 0;
     int role_art_count = 0;
 
+    std::unordered_set<int> artist_ranks;
+
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<> role_dist(1, world_size - 1), wait_dist(1, 5);
+    std::uniform_int_distribution<> role_dist(1, world_size - 1), wait_dist(1, 5), resource_dist(1, resource_count - 1);
 
     if (world_rank == 0) {
         role_geo_count = role_dist(gen);
@@ -141,6 +167,12 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
             process_roles[i] = ART;
         }
         std::shuffle(process_roles.begin(), process_roles.end(), gen);
+
+        for (int i = 0; i < world_size; i++) {
+            if (process_roles[i] == ART) {
+                artist_ranks.insert(i);
+            }
+        }
 
         printf("GEO COUNT: %d, ART COUNT: %d\n", role_geo_count, role_art_count);
         printf("(%d) [%d] Roles generated, my role: %s\n", world_rank, time_vector[world_rank],
@@ -157,7 +189,6 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
     State state = REST;
 
     auto start = std::chrono::high_resolution_clock::now();
-    auto wait_seconds = wait_dist(gen);
 
     switch (role) {
     case GEO: {
@@ -170,14 +201,17 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
         std::unordered_set<int> pair_requested; // dunno now if necessary
         int process_to_pair = -1;
 
+        int rest_wait_seconds = wait_dist(gen);
+
         while (true) {
             switch (state) {
             case REST: {
-                printf("(G%d) [%d] Changed status to: REST (%ds)\n", world_rank, time_vector[world_rank], wait_seconds);
+                printf("(G%d) [%d] Changed status to: REST (%ds)\n", world_rank, time_vector[world_rank],
+                       rest_wait_seconds);
 
                 auto stop = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
-                while (duration.count() < wait_seconds) {
+                while (duration.count() < rest_wait_seconds) {
                     const auto result = receive_nonblocking();
                     if (result.received) {
                         const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
@@ -463,16 +497,24 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
     case ART: {
         // (PROCESS_ID/IS_PAIR_SEND)
         std::list<std::pair<int, bool>> pair_wait_queue;
+        std::list<int> resource_queue;
         int process_to_pair = -1;
+
+        auto rest_wait_seconds = wait_dist(gen);
+        auto section_wait_seconds = wait_dist(gen);
+
+        int requested_resources = 0;
 
         while (true) {
             switch (state) {
             case REST: {
-                printf("(A%d) [%d] Changed status to: REST (%ds)\n", world_rank, time_vector[world_rank], wait_seconds);
+                printf("(A%d) [%d] Changed status to: REST (%ds)\n", world_rank, time_vector[world_rank],
+                       rest_wait_seconds);
 
+                start = std::chrono::high_resolution_clock::now();
                 auto stop = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
-                while (duration.count() < wait_seconds) {
+                while (duration.count() < rest_wait_seconds) {
                     const auto result = receive_nonblocking();
                     if (result.received) {
                         const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
@@ -482,6 +524,16 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                         update_time_vector(result, time_vector, world_rank);
 
                         switch (message_type) {
+                        case REQ_RES: {
+                            send_message_buf[0] = ++time_vector[world_rank];
+                            send_message_buf[1] = resource_count;
+                            MPI_Send(send_message_buf, ACK_RES_LEN, MPI_INT, message_source, ACK_RES, MPI_COMM_WORLD);
+                            break;
+                        }
+                        case ACK_RES: {
+                            used_resources[message_source] -= result.msg_buffer[1];
+                            break;
+                        }
                         default:
                             break;
                         }
@@ -504,7 +556,6 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                         MPI_Send(send_message_buf, AVAILABLE_LEN, MPI_INT, i, AVAILABLE, MPI_COMM_WORLD);
                     }
                 }
-
 
                 while (process_to_pair == -1) {
                     // analyze queue
@@ -559,6 +610,16 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                         }
                         break;
                     }
+                    case REQ_RES: {
+                        send_message_buf[0] = ++time_vector[world_rank];
+                        send_message_buf[1] = resource_count;
+                        MPI_Send(send_message_buf, ACK_RES_LEN, MPI_INT, message_source, ACK_RES, MPI_COMM_WORLD);
+                        break;
+                    }
+                    case ACK_RES: {
+                        used_resources[message_source] -= result.msg_buffer[1];
+                        break;
+                    }
                     default:
                         break;
                     }
@@ -568,21 +629,93 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                 break;
             }
             case WAIT_FOR_RESOURCE: {
-                printf("(A%d) [%d] Changed status to: WAIT_FOR_RESOURCE (%ds)\n", world_rank, time_vector[world_rank],
-                       wait_seconds);
+                requested_resources = resource_dist(gen);
+                for (int i = 0; i < used_resources.size(); i++) {
+                    if (i == world_rank || artist_ranks.find(i) == artist_ranks.end()) {
+                        continue;
+                    }
+                    used_resources[i] += resource_count;
+                    send_message_buf[0] = ++time_vector[world_rank];
+                    MPI_Send(send_message_buf, REQ_RES_LEN, MPI_INT, i, REQ_RES, MPI_COMM_WORLD);
+                }
+
+                printf("(A%d) [%d] Changed status to: WAIT_FOR_RESOURCE (%d resources)\n", world_rank,
+                       time_vector[world_rank], requested_resources);
+
+                int resource_sum = std::accumulate(used_resources.begin(), used_resources.end(), 0);
+                while (resource_sum + requested_resources > resource_count) {
+                    const auto result = receive_blocking();
+
+                    const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                    const int message_source = result.status.MPI_SOURCE;
+                    int rec_timestamp = result.msg_buffer[0];
+                    int own_timestamp = time_vector[world_rank];
+
+                    update_time_vector(result, time_vector, world_rank);
+
+                    switch (message_type) {
+                    case REQ_RES: {
+                        bool other_has_priority = rec_timestamp < own_timestamp ||
+                            (rec_timestamp == own_timestamp && message_source < world_rank);
+                        if (other_has_priority ||
+                            std::find(resource_queue.begin(), resource_queue.end(), message_source) !=
+                                resource_queue.end()) {
+                            send_message_buf[0] = ++time_vector[world_rank];
+                            send_message_buf[1] = resource_count;
+                            MPI_Send(send_message_buf, ACK_RES_LEN, MPI_INT, message_source, ACK_RES, MPI_COMM_WORLD);
+                        }
+                        else {
+                            send_message_buf[0] = ++time_vector[world_rank];
+                            send_message_buf[1] = resource_count - requested_resources;
+                            MPI_Send(send_message_buf, ACK_RES_LEN, MPI_INT, message_source, ACK_RES, MPI_COMM_WORLD);
+                            resource_queue.emplace_back(message_source);
+                        }
+
+                        break;
+                    }
+                    case ACK_RES: {
+                        used_resources[message_source] -= result.msg_buffer[1];
+
+                        resource_sum = std::accumulate(used_resources.begin(), used_resources.end(), 0);
+                        break;
+                    }
+                    default:
+                        break;
+                    }
+                }
+
+                state = IN_SECTION;
+                break;
+            }
+            case IN_SECTION: {
+                printf("(A%d) [%d] Switching to IN_SECTION (%d resources, %ds)\n", world_rank, time_vector[world_rank],
+                       requested_resources, section_wait_seconds);
 
                 start = std::chrono::high_resolution_clock::now();
                 auto stop = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
-                while (duration.count() < wait_seconds) {
+
+                while (duration.count() < section_wait_seconds) {
                     const auto result = receive_nonblocking();
                     if (result.received) {
                         const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                        const int message_source = result.status.MPI_SOURCE;
                         // int rec_timestamp = result.msg_buffer[0];
 
                         update_time_vector(result, time_vector, world_rank);
 
                         switch (message_type) {
+                        case REQ_RES: {
+                            send_message_buf[0] = ++time_vector[world_rank];
+                            send_message_buf[1] = resource_count - requested_resources;
+                            MPI_Send(send_message_buf, ACK_RES_LEN, MPI_INT, message_source, ACK_RES, MPI_COMM_WORLD);
+                            resource_queue.emplace_back(message_source);
+                            break;
+                        }
+                        case ACK_RES: {
+                            used_resources[message_source] -= result.msg_buffer[1];
+                            break;
+                        }
                         default:
                             break;
                         }
@@ -592,25 +725,29 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                     duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
                 }
 
+                while (!resource_queue.empty()) {
+                    send_message_buf[0] = ++time_vector[world_rank];
+                    send_message_buf[1] = requested_resources;
+                    MPI_Send(send_message_buf, ACK_RES_LEN, MPI_INT, resource_queue.front(), ACK_RES, MPI_COMM_WORLD);
+
+                    resource_queue.pop_front();
+                }
+
                 // RESET HARD
                 printf("(A%d) [%d] Unpairing with %d\n", world_rank, time_vector[world_rank], process_to_pair);
                 send_message_buf[0] = ++time_vector[world_rank];
                 MPI_Send(send_message_buf, UNPAIR_LEN, MPI_INT, process_to_pair, UNPAIR, MPI_COMM_WORLD);
+
+                printf("(A%d) [%d] Switching to REST (-%d resources)\n", world_rank, time_vector[world_rank],
+                       requested_resources);
                 process_to_pair = -1;
                 state = REST;
                 break;
             }
-            // case IN_SECTION: {
-            //     break;
-            // }
             default:
                 break;
             }
         }
-        break;
-    }
-    default: {
-        printf("NOT HERE PLZ\n");
         break;
     }
     }
