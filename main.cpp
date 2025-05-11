@@ -131,26 +131,17 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<> role_dist(0, 1), wait_dist(1, 5);
+    std::uniform_int_distribution<> role_dist(1, world_size - 1), wait_dist(1, 5);
 
     if (world_rank == 0) {
-        while (role_art_count == 0 || role_geo_count == 0) {
-            role_art_count = 0;
-            role_geo_count = 0;
-
-            for (int i = 0; i < world_size; i++) {
-                if (role_dist(gen) == 0) {
-                    process_roles[i] = GEO;
-                    role_geo_count++;
-                }
-                else {
-                    process_roles[i] = ART;
-                    role_art_count++;
-                }
-            }
-            printf("GEO COUNT: %d, ART COUNT: %d\n", role_geo_count, role_art_count);
+        role_geo_count = role_dist(gen);
+        role_art_count = world_size - role_geo_count;
+        for (int i = 0; i < role_art_count; i++) {
+            process_roles[i] = ART;
         }
+        std::shuffle(process_roles.begin(), process_roles.end(), gen);
 
+        printf("GEO COUNT: %d, ART COUNT: %d\n", role_geo_count, role_art_count);
         printf("(%d) [%d] Roles generated, my role: %s\n", world_rank, time_vector[world_rank],
                process_roles[0] == GEO ? "GEO" : "ART");
     }
@@ -181,7 +172,6 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
         while (true) {
             switch (state) {
             case REST: {
-                // std::this_thread::sleep_for(std::chrono::seconds(2));
                 printf("(G%d) [%d] Changed status to: REST (%ds)\n", world_rank, time_vector[world_rank], wait_seconds);
 
                 auto stop = std::chrono::high_resolution_clock::now();
