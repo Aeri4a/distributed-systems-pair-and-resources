@@ -181,25 +181,26 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                     const auto result = receive_nonblocking();
                     if (result.received) {
                         const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                        const int message_source = result.status.MPI_SOURCE;
                         int rec_timestamp = result.msg_buffer[0];
 
                         update_time_vector(result, time_vector, world_rank);
 
                         switch (message_type) {
                         case REQ_QUEUE: {
-                            pair_queue.add(result.status.MPI_SOURCE, rec_timestamp);
+                            pair_queue.add(message_source, rec_timestamp);
 
                             send_message_buf[0] = ++time_vector[world_rank];
-                            MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, result.status.MPI_SOURCE, ACK_QUEUE,
+                            MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, message_source, ACK_QUEUE,
                                      MPI_COMM_WORLD);
                             break;
                         }
                         case AVAILABLE: {
-                            available_artists.insert(result.status.MPI_SOURCE);
+                            available_artists.insert(message_source);
                             break;
                         }
                         case RELEASE_PAIR: {
-                            pair_queue.remove(result.status.MPI_SOURCE);
+                            pair_queue.remove(message_source);
                             // with who ART out of queue
                             int busy_artist = result.msg_buffer[1];
                             available_artists.erase(busy_artist);
@@ -234,17 +235,17 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                     const auto result = receive_blocking();
 
                     const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                    const int message_source = result.status.MPI_SOURCE;
                     int rec_timestamp = result.msg_buffer[0];
 
                     update_time_vector(result, time_vector, world_rank);
 
                     switch (message_type) {
                     case REQ_QUEUE: {
-                        pair_queue.add(result.status.MPI_SOURCE, rec_timestamp);
+                        pair_queue.add(message_source, rec_timestamp);
 
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, result.status.MPI_SOURCE, ACK_QUEUE,
-                                 MPI_COMM_WORLD);
+                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, message_source, ACK_QUEUE, MPI_COMM_WORLD);
                         break;
                     }
                     case ACK_QUEUE: {
@@ -252,11 +253,11 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                         break;
                     }
                     case AVAILABLE: {
-                        available_artists.insert(result.status.MPI_SOURCE);
+                        available_artists.insert(message_source);
                         break;
                     }
                     case RELEASE_PAIR: {
-                        pair_queue.remove(result.status.MPI_SOURCE);
+                        pair_queue.remove(message_source);
                         // with who ART out of queue
                         int busy_artist = result.msg_buffer[1];
                         available_artists.erase(busy_artist);
@@ -280,25 +281,25 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                     const auto result = receive_blocking();
 
                     const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                    const int message_source = result.status.MPI_SOURCE;
                     int rec_timestamp = result.msg_buffer[0];
 
                     update_time_vector(result, time_vector, world_rank);
 
                     switch (message_type) {
                     case REQ_QUEUE: {
-                        pair_queue.add(result.status.MPI_SOURCE, rec_timestamp);
+                        pair_queue.add(message_source, rec_timestamp);
 
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, result.status.MPI_SOURCE, ACK_QUEUE,
-                                 MPI_COMM_WORLD);
+                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, message_source, ACK_QUEUE, MPI_COMM_WORLD);
                         break;
                     }
                     case AVAILABLE: {
-                        available_artists.insert(result.status.MPI_SOURCE);
+                        available_artists.insert(message_source);
                         break;
                     }
                     case RELEASE_PAIR: {
-                        pair_queue.remove(result.status.MPI_SOURCE);
+                        pair_queue.remove(message_source);
                         // with who ART out of queue
                         int busy_artist = result.msg_buffer[1];
                         available_artists.erase(busy_artist);
@@ -332,25 +333,24 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                     const auto result = receive_blocking();
 
                     const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                    const int message_source = result.status.MPI_SOURCE;
                     int rec_timestamp = result.msg_buffer[0];
 
                     update_time_vector(result, time_vector, world_rank);
 
                     switch (message_type) {
                     case REQ_QUEUE: {
-                        pair_queue.add(result.status.MPI_SOURCE, rec_timestamp);
+                        pair_queue.add(message_source, rec_timestamp);
 
                         send_message_buf[0] = ++time_vector[world_rank];
-                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, result.status.MPI_SOURCE, ACK_QUEUE,
-                                 MPI_COMM_WORLD);
+                        MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, message_source, ACK_QUEUE, MPI_COMM_WORLD);
                         break;
                     }
                     case AVAILABLE: {
-                        available_artists.insert(result.status.MPI_SOURCE);
+                        available_artists.insert(message_source);
                         if (!is_first_match) {
                             send_message_buf[0] = ++time_vector[world_rank];
-                            MPI_Send(send_message_buf, PAIR_LEN, MPI_INT, result.status.MPI_SOURCE, PAIR,
-                                     MPI_COMM_WORLD);
+                            MPI_Send(send_message_buf, PAIR_LEN, MPI_INT, message_source, PAIR, MPI_COMM_WORLD);
                             // pair_requested.insert(status.MPI_SOURCE);
                         }
                         break;
@@ -358,7 +358,7 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                     case RELEASE_PAIR: {
                         int artist_pair = result.msg_buffer[1];
                         // if someone else then just remove them from queue and available
-                        pair_queue.remove(result.status.MPI_SOURCE);
+                        pair_queue.remove(message_source);
                         available_artists.erase(artist_pair);
 
                         // check if best cand is with me or not
@@ -410,32 +410,32 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                 const auto result = receive_blocking();
 
                 const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                const int message_source = result.status.MPI_SOURCE;
                 int rec_timestamp = result.msg_buffer[0];
 
                 update_time_vector(result, time_vector, world_rank);
 
                 switch (message_type) {
                 case REQ_QUEUE: {
-                    pair_queue.add(result.status.MPI_SOURCE, rec_timestamp);
+                    pair_queue.add(message_source, rec_timestamp);
 
                     send_message_buf[0] = ++time_vector[world_rank];
-                    MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, result.status.MPI_SOURCE, ACK_QUEUE,
-                             MPI_COMM_WORLD);
+                    MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, message_source, ACK_QUEUE, MPI_COMM_WORLD);
                     break;
                 }
                 case AVAILABLE: {
-                    available_artists.insert(result.status.MPI_SOURCE);
+                    available_artists.insert(message_source);
                     break;
                 }
                 case RELEASE_PAIR: {
-                    pair_queue.remove(result.status.MPI_SOURCE);
+                    pair_queue.remove(message_source);
                     // with who ART out of queue
                     int busy_artist = result.msg_buffer[1];
                     available_artists.erase(busy_artist);
                     break;
                 }
                 case UNPAIR: {
-                    if (result.status.MPI_SOURCE != process_to_pair)
+                    if (message_source != process_to_pair)
                         break;
 
                     printf("(G%d) [%d] Unpaired with %d\n", world_rank, time_vector[world_rank], process_to_pair);
@@ -476,6 +476,7 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                     const auto result = receive_nonblocking();
                     if (result.received) {
                         const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                        const int message_source = result.status.MPI_SOURCE;
                         // int rec_timestamp = result.msg_buffer[0];
 
                         update_time_vector(result, time_vector, world_rank);
@@ -518,12 +519,12 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                     const auto result = receive_blocking();
 
                     const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
-
+                    const int message_source = result.status.MPI_SOURCE;
                     update_time_vector(result, time_vector, world_rank);
 
                     switch (message_type) {
                     case PAIR: {
-                        pair_wait_queue.emplace_back(result.status.MPI_SOURCE, false);
+                        pair_wait_queue.emplace_back(message_source, false);
                         break;
                     }
                     case RELEASE_PAIR: {
@@ -532,10 +533,10 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                             break;
                         }
 
-                        if (result.status.MPI_SOURCE != pair_wait_queue.front().first) {
+                        if (message_source != pair_wait_queue.front().first) {
                             // check if in our queue and if then delete
                             for (auto it = pair_wait_queue.begin(); it != pair_wait_queue.end(); ++it) {
-                                if (it->first == result.status.MPI_SOURCE) {
+                                if (it->first == message_source) {
                                     pair_wait_queue.erase(it);
                                     break;
                                 }
@@ -546,7 +547,7 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
                             // if with us "happy end"
                             int artist_pair = result.msg_buffer[1];
                             if (artist_pair == world_rank) {
-                                process_to_pair = result.status.MPI_SOURCE;
+                                process_to_pair = message_source;
                                 pair_wait_queue.clear(); // could send before ?
                                 printf("(A%d) [%d] Paired with process (%d)\n", world_rank, time_vector[world_rank],
                                        process_to_pair);
