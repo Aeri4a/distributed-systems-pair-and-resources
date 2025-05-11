@@ -69,6 +69,7 @@ RecvResult receive_nonblocking() {
     MPI_Get_count(&result.status, MPI_INT, &result.msg_length);
     MPI_Recv(result.msg_buffer, result.msg_length, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD,
              MPI_STATUS_IGNORE);
+    result.received = true;
     return result;
 }
 
@@ -112,7 +113,7 @@ int find_least_paired_process(const std::unordered_map<int, int>& pair_count_his
     return min_paired_process;
 }
 
-int main(int argc, char** argv) {
+[[noreturn]] int main(int argc, char** argv) {
     int world_size, world_rank, provided;
     MPI_Init_thread(&argc, &argv, 1, &provided);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
@@ -130,7 +131,7 @@ int main(int argc, char** argv) {
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<> role_dist(0, 1);
+    std::uniform_int_distribution<> role_dist(0, 1), wait_dist(1, 5);
 
     if (world_rank == 0) {
         while (role_art_count == 0 || role_geo_count == 0) {
@@ -163,6 +164,9 @@ int main(int argc, char** argv) {
     int send_message_buf[2]{};
     State state = REST;
 
+    auto start = std::chrono::high_resolution_clock::now();
+    auto wait_seconds = wait_dist(gen);
+
     switch (role) {
     case GEO: {
         // Base structures
@@ -177,8 +181,48 @@ int main(int argc, char** argv) {
         while (true) {
             switch (state) {
             case REST: {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                printf("(G%d) [%d] Changed status to: REST\n", world_rank, time_vector[world_rank]);
+                // std::this_thread::sleep_for(std::chrono::seconds(2));
+                printf("(G%d) [%d] Changed status to: REST (%ds)\n", world_rank, time_vector[world_rank], wait_seconds);
+
+                auto stop = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
+                while (duration.count() < wait_seconds) {
+                    const auto result = receive_nonblocking();
+                    if (result.received) {
+                        const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                        int rec_timestamp = result.msg_buffer[0];
+
+                        update_time_vector(result, time_vector, world_rank);
+
+                        switch (message_type) {
+                        case REQ_QUEUE: {
+                            pair_queue.add(result.status.MPI_SOURCE, rec_timestamp);
+
+                            send_message_buf[0] = ++time_vector[world_rank];
+                            MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, result.status.MPI_SOURCE, ACK_QUEUE,
+                                     MPI_COMM_WORLD);
+                            break;
+                        }
+                        case AVAILABLE: {
+                            available_artists.insert(result.status.MPI_SOURCE);
+                            break;
+                        }
+                        case RELEASE_PAIR: {
+                            pair_queue.remove(result.status.MPI_SOURCE);
+                            // with who ART out of queue
+                            int busy_artist = result.msg_buffer[1];
+                            available_artists.erase(busy_artist);
+                            break;
+                        }
+                        default:
+                            break;
+                        }
+                    }
+
+                    stop = std::chrono::high_resolution_clock::now();
+                    duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
+                }
+
                 state = WAIT_FOR_QUEUE;
                 break;
             }
@@ -372,16 +416,51 @@ int main(int argc, char** argv) {
                 break;
             }
             case PAIRED: {
-                // is_done = true;
+                const auto result = receive_blocking();
 
-                // RESET HARD
-                // available_artists.clear();
-                // pair_queue = PairQueue();
-                // pair_count_history.clear();
-                // pair_requested.clear();
-                process_to_pair = -1;
-                state = REST;
-                break;
+                const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                int rec_timestamp = result.msg_buffer[0];
+
+                update_time_vector(result, time_vector, world_rank);
+
+                switch (message_type) {
+                case REQ_QUEUE: {
+                    pair_queue.add(result.status.MPI_SOURCE, rec_timestamp);
+
+                    send_message_buf[0] = ++time_vector[world_rank];
+                    MPI_Send(send_message_buf, ACK_QUEUE_LEN, MPI_INT, result.status.MPI_SOURCE, ACK_QUEUE,
+                             MPI_COMM_WORLD);
+                    break;
+                }
+                case AVAILABLE: {
+                    available_artists.insert(result.status.MPI_SOURCE);
+                    break;
+                }
+                case RELEASE_PAIR: {
+                    pair_queue.remove(result.status.MPI_SOURCE);
+                    // with who ART out of queue
+                    int busy_artist = result.msg_buffer[1];
+                    available_artists.erase(busy_artist);
+                    break;
+                }
+                case UNPAIR: {
+                    if (result.status.MPI_SOURCE != process_to_pair)
+                        break;
+
+                    printf("(G%d) [%d] Unpaired with %d\n", world_rank, time_vector[world_rank], process_to_pair);
+
+                    // RESET HARD
+                    // available_artists.clear();
+                    // pair_queue = PairQueue();
+                    // pair_count_history.clear();
+                    // pair_requested.clear();
+                    process_to_pair = -1;
+                    state = REST;
+                    break;
+                }
+                default:
+                    break;
+                }
             }
             default:
                 break;
@@ -398,7 +477,28 @@ int main(int argc, char** argv) {
         while (true) {
             switch (state) {
             case REST: {
-                printf("(A%d) [%d] Changed status to: REST\n", world_rank, time_vector[world_rank]);
+                printf("(A%d) [%d] Changed status to: REST (%ds)\n", world_rank, time_vector[world_rank], wait_seconds);
+
+                auto stop = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
+                while (duration.count() < wait_seconds) {
+                    const auto result = receive_nonblocking();
+                    if (result.received) {
+                        const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                        // int rec_timestamp = result.msg_buffer[0];
+
+                        update_time_vector(result, time_vector, world_rank);
+
+                        switch (message_type) {
+                        default:
+                            break;
+                        }
+                    }
+
+                    stop = std::chrono::high_resolution_clock::now();
+                    duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
+                }
+
                 state = WAIT_FOR_PAIR;
                 break;
             }
@@ -476,17 +576,41 @@ int main(int argc, char** argv) {
                 break;
             }
             case WAIT_FOR_RESOURCE: {
-                // is_done = true;
-                std::this_thread::sleep_for(std::chrono::seconds(2));
+                printf("(A%d) [%d] Changed status to: WAIT_FOR_RESOURCE (%ds)\n", world_rank, time_vector[world_rank],
+                       wait_seconds);
+
+                start = std::chrono::high_resolution_clock::now();
+                auto stop = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
+                while (duration.count() < wait_seconds) {
+                    const auto result = receive_nonblocking();
+                    if (result.received) {
+                        const auto message_type = static_cast<MessageType>(result.status.MPI_TAG);
+                        // int rec_timestamp = result.msg_buffer[0];
+
+                        update_time_vector(result, time_vector, world_rank);
+
+                        switch (message_type) {
+                        default:
+                            break;
+                        }
+                    }
+
+                    stop = std::chrono::high_resolution_clock::now();
+                    duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
+                }
 
                 // RESET HARD
+                printf("(A%d) [%d] Unpairing with %d\n", world_rank, time_vector[world_rank], process_to_pair);
+                send_message_buf[0] = ++time_vector[world_rank];
+                MPI_Send(send_message_buf, UNPAIR_LEN, MPI_INT, process_to_pair, UNPAIR, MPI_COMM_WORLD);
                 process_to_pair = -1;
                 state = REST;
                 break;
             }
-            case IN_SECTION: {
-                break;
-            }
+            // case IN_SECTION: {
+            //     break;
+            // }
             default:
                 break;
             }
@@ -500,4 +624,5 @@ int main(int argc, char** argv) {
     }
 
     MPI_Finalize();
+    return EXIT_SUCCESS;
 }
