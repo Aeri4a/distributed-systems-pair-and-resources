@@ -1,26 +1,14 @@
-#pragma once
-#include <list>
-#include <set>
-#include <unordered_map>
-
 #ifndef PAIRQUEUE_HPP
 #define PAIRQUEUE_HPP
+
+#include <list>
 
 struct PairQueueEntry {
     int processId;
     int timestamp;
-
-    // Order by timestamp, then processId to ensure uniqueness
-    // bool operator<(const PairQueueEntry& other) const {
-    //     if (timestamp == other.timestamp)
-    //         return processId < other.processId;
-    //     return timestamp < other.timestamp;
-    // }
 };
 
 class PairQueue {
-    // std::set<PairQueueEntry> queue;
-    // std::unordered_map<int, std::set<PairQueueEntry>::iterator> id_map;
     std::list<PairQueueEntry> pair_queue;
 
 public:
@@ -29,22 +17,7 @@ public:
     void remove(int id);
 
     int getPosition(int id) const;
-
-    // void printQueue() const {
-    //     std::cout << "Queue: ";
-    //     for (const auto& p : queue) {
-    //         std::cout << "(" << p.id << ", " << p.timestamp << ") ";
-    //     }
-    //     std::cout << "\n";
-    // }
-
-    // std::vector<int> getQueueAsVector() const {
-    //     std::vector<int> ids;
-    //     for (const auto& p : queue) ids.push_back(p.id);
-    //     return ids;
-    // }
 };
 
 
-
-#endif //PAIRQUEUE_HPP
+#endif // PAIRQUEUE_HPP
