@@ -9,6 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt install -y --no-install-recommends \
     openssh-server \
     build-essential \
+    zlib1g-dev \
     apt-utils \
     wget \
     sudo \
