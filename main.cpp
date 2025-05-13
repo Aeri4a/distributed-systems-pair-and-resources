@@ -121,12 +121,6 @@ int main(int argc, char** argv) {
         }
         std::shuffle(process_roles.begin(), process_roles.end(), gen);
 
-        for (int i = 0; i < world_size; i++) {
-            if (process_roles[i] == ART) {
-                artist_ranks.insert(i);
-            }
-        }
-
         printf("GEO COUNT: %d, ART COUNT: %d\n", role_geo_count, role_art_count);
         printf("(%d) [%d] Roles generated, my role: %s\n", world_rank, time_vector[world_rank],
                process_roles[0] == GEO ? "GEO" : "ART");
@@ -136,6 +130,12 @@ int main(int argc, char** argv) {
     const Role role = process_roles[world_rank];
     if (world_rank != 0) {
         printf("(%d) [%d] Received role: %s\n", world_rank, time_vector[world_rank], role == GEO ? "GEO" : "ART");
+    }
+
+    for (int i = 0; i < world_size; i++) {
+        if (process_roles[i] == ART) {
+            artist_ranks.insert(i);
+        }
     }
 
     switch (role) {
